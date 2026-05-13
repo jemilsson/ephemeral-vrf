@@ -1,5 +1,6 @@
 use crate::consts::OPRF_PREFIX_CHALLENGE;
-use crate::primitives::{hkdf_nonce, hash_to_scalar};
+use crate::primitives::hkdf_nonce;
+use solana_sdk::hash::hash;
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
@@ -52,7 +53,7 @@ pub fn compute_oprf(
         R2.compress().to_bytes().to_vec(),
     ]
     .concat();
-    let c = hash_to_scalar(&challenge_input, None);
+    let c = Scalar::from_bytes_mod_order(hash(&challenge_input).to_bytes());
 
     let s = k + c * sk; // s = k + c*sk
 
@@ -102,7 +103,7 @@ pub fn verify_dleq(
         proof.r2.to_bytes().to_vec(),
     ]
     .concat();
-    let c = hash_to_scalar(&challenge_input, None);
+    let c = Scalar::from_bytes_mod_order(hash(&challenge_input).to_bytes());
 
     // Verify: s*T == R1 + c*Z  and  s*G == R2 + c*K
     let lhs_t = proof.s * T;

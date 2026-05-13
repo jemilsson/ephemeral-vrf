@@ -1,5 +1,5 @@
 use crate::consts::{VRF_PREFIX_CHALLENGE, VRF_PREFIX_HASH_TO_POINT, VRF_PREFIX_HASH_TO_SCALAR};
-use crate::primitives::{hkdf_nonce, hash_to_scalar};
+use crate::primitives::hkdf_nonce;
 use curve25519_dalek::constants::{RISTRETTO_BASEPOINT_POINT, RISTRETTO_BASEPOINT_TABLE};
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
@@ -62,7 +62,9 @@ pub fn compute_vrf(
     ]
     .concat();
 
-    let c = hash_to_scalar(&challenge_input, Some(VRF_PREFIX_HASH_TO_SCALAR));
+    let inner = hash(&challenge_input);
+    let outer_input = [VRF_PREFIX_HASH_TO_SCALAR, &inner.to_bytes()[..]].concat();
+    let c = Scalar::from_bytes_mod_order(hash(&outer_input).to_bytes());
 
     // Response
     let s = k + c * sk;
@@ -108,7 +110,9 @@ pub fn verify_vrf(
         input.to_vec(),
     ]
     .concat();
-    let c = hash_to_scalar(&challenge_input, Some(VRF_PREFIX_HASH_TO_SCALAR));
+    let inner = hash(&challenge_input);
+    let outer_input = [VRF_PREFIX_HASH_TO_SCALAR, &inner.to_bytes()[..]].concat();
+    let c = Scalar::from_bytes_mod_order(hash(&outer_input).to_bytes());
 
     // ---------------------------
     // 1) Schnorr check for G:
