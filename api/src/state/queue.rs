@@ -35,7 +35,9 @@ pub struct QueueItem {
     pub args_len: u16,  // number of bytes
     pub priority_request: u8,
     pub used: u8, // Flag: 1 = used, 0 = free (logically removed)
-    pub _padding: [u8; 4],
+    /// 0 = standard VRF, 1 = OPRF (oblivious). Defaults to 0 via Zeroable/Default.
+    pub request_type: u8,
+    pub _padding: [u8; 3],
 }
 
 impl QueueItem {

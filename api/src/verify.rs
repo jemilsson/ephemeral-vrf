@@ -127,3 +127,74 @@ fn hash_to_scalar(input: &[u8; 32]) -> PodScalar {
 pub fn is_on_curve(key: &Pubkey) -> bool {
     validate_edwards(&PodEdwardsPoint(key.to_bytes()))
 }
+
+/// Verify a DLEQ proof for OPRF output.
+///
+/// Checks that `output = sk·T` is consistent with the registered oracle key `pk = sk·G`,
+/// i.e. the oracle used the same secret key for both evaluations.
+///
+/// `pk`:          oracle's registered public key K = sk·G
+/// `blinded`:     client's blinded input T (compressed Ristretto)
+/// `output`:      oracle's OPRF evaluation Z = sk·T (compressed Ristretto)
+/// `r1`:          commitment k·T
+/// `r2`:          commitment k·G
+/// `s`:           response s = k + c·sk
+pub fn verify_dleq(
+    pk: &PodRistrettoPoint,
+    blinded: &PodRistrettoPoint,
+    output: &PodRistrettoPoint,
+    r1: &PodRistrettoPoint,
+    r2: &PodRistrettoPoint,
+    s: &PodScalar,
+) -> bool {
+    use crate::consts::OPRF_PREFIX_CHALLENGE;
+
+    // Reject identity blinded point (would produce predictable output).
+    // Identity point encodes as 32 zero bytes.
+    if blinded.0 == [0u8; 32] {
+        return false;
+    }
+
+    // Recompute challenge: hash(T, K, Z, R1, R2) with domain separator.
+    let challenge_input = [
+        OPRF_PREFIX_CHALLENGE.to_vec(),
+        blinded.0.to_vec(),
+        pk.0.to_vec(),
+        output.0.to_vec(),
+        r1.0.to_vec(),
+        r2.0.to_vec(),
+    ]
+    .concat();
+    let challenge_hash = hash(challenge_input.as_slice());
+    let c = hash_to_scalar(&challenge_hash.to_bytes());
+
+    // 1) s·T == R1 + c·Z
+    let lhs_t = match multiply_ristretto(s, blinded) {
+        Some(p) => p,
+        None => return false,
+    };
+    let c_z = match multiply_ristretto(&c, output) {
+        Some(p) => p,
+        None => return false,
+    };
+    let rhs_t = match add_ristretto(r1, &c_z) {
+        Some(p) => p,
+        None => return false,
+    };
+
+    // 2) s·G == R2 + c·K
+    let lhs_g = match multiply_ristretto(s, &RISTRETTO_BASEPOINT_POINT) {
+        Some(p) => p,
+        None => return false,
+    };
+    let c_k = match multiply_ristretto(&c, pk) {
+        Some(p) => p,
+        None => return false,
+    };
+    let rhs_g = match add_ristretto(r2, &c_k) {
+        Some(p) => p,
+        None => return false,
+    };
+
+    lhs_t == rhs_t && lhs_g == rhs_g
+}

@@ -107,8 +107,9 @@ pub fn process_request_randomness(
             metas_len: 0,
             args_len: 0,
             priority_request: high_priority as u8,
+            request_type: 0,
             used: 0,
-            _padding: [0u8; 4],
+            _padding: [0u8; 3],
         };
 
         // Append the item to the queue (writes discriminator, metas, args into the variable region)

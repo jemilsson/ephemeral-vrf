@@ -2,9 +2,10 @@ use crate::blockhash_cache::BlockhashCache;
 use crate::oracle::client::OracleClient;
 use anyhow::Result;
 use ephemeral_vrf::vrf::{compute_vrf, verify_vrf};
+use ephemeral_vrf::oprf::compute_oprf;
 use ephemeral_vrf_api::{
     prelude::{
-        provide_randomness, purge_expired_requests, Queue, QueueAccount, QueueItem, QUEUE_TTL_SLOTS,
+        provide_randomness, provide_oblivious_randomness, purge_expired_requests, Queue, QueueAccount, QueueItem, QUEUE_TTL_SLOTS,
     },
     state::oracle_queue_pda,
     ID as PROGRAM_ID,
@@ -325,40 +326,68 @@ impl ProcessableItem {
         queue_meta: &Queue,
         account_bytes: &[u8],
     ) -> Result<String> {
-        let (output, (commitment_base, commitment_hash, s)) =
-            compute_vrf(oracle_client.oracle_vrf_sk, vrf_input);
-
-        assert!(verify_vrf(
-            oracle_client.oracle_vrf_pk,
-            vrf_input,
-            output,
-            (commitment_base, commitment_hash, s),
-        ));
-
         let (blockhash, current_slot) = blockhash_cache.get_blockhash_and_slot().await;
 
         // Check whether the request is expired
         let age = current_slot.saturating_sub(self.0.slot);
         let is_purge = age > QUEUE_TTL_SLOTS;
         let ix = if is_purge {
-            // Build purge instruction for the queue index
             purge_expired_requests(oracle_client.keypair.pubkey(), queue_meta.index)
         } else {
-            // Build provide_randomness instruction
-            let mut ix = provide_randomness(
-                oracle_client.keypair.pubkey(),
-                *queue_pubkey,
-                Pubkey::new_from_array(self.0.callback_program_id),
-                *vrf_input,
-                PodRistrettoPoint(output.to_bytes()),
-                PodRistrettoPoint(commitment_base.to_bytes()),
-                PodRistrettoPoint(commitment_hash.to_bytes()),
-                PodScalar(s.to_bytes()),
-            );
-            let metas = self.0.account_metas(&account_bytes[8..]);
-            ix.accounts
-                .extend(metas.iter().map(|a| a.to_account_meta()));
-            ix
+            match self.0.request_type {
+                1 => {
+                    // OPRF request: extract blinded_point from first 32 bytes of callback_args.
+                    let raw_args = self.0.callback_args(&account_bytes[8..]);
+                    if raw_args.len() < 32 {
+                        return Err(anyhow::anyhow!("OPRF request missing blinded_point in args"));
+                    }
+                    let blinded_point: [u8; 32] = raw_args[0..32].try_into().unwrap();
+                    let (oprf_output, dleq_proof) = compute_oprf(
+                        oracle_client.oracle_vrf_sk,
+                        oracle_client.oracle_vrf_pk,
+                        &blinded_point,
+                    )
+                    .ok_or_else(|| anyhow::anyhow!("OPRF computation failed: invalid blinded point"))?;
+                    let mut ix = provide_oblivious_randomness(
+                        oracle_client.keypair.pubkey(),
+                        *queue_pubkey,
+                        Pubkey::new_from_array(self.0.callback_program_id),
+                        self.0.id,
+                        PodRistrettoPoint(oprf_output.to_bytes()),
+                        PodRistrettoPoint(dleq_proof.r1.to_bytes()),
+                        PodRistrettoPoint(dleq_proof.r2.to_bytes()),
+                        PodScalar(dleq_proof.s.to_bytes()),
+                    );
+                    let metas = self.0.account_metas(&account_bytes[8..]);
+                    ix.accounts.extend(metas.iter().map(|a| a.to_account_meta()));
+                    ix
+                }
+                0 => {
+                    // Standard VRF request.
+                    let (output, (commitment_base, commitment_hash, s)) =
+                        compute_vrf(oracle_client.oracle_vrf_sk, vrf_input);
+                    assert!(verify_vrf(
+                        oracle_client.oracle_vrf_pk,
+                        vrf_input,
+                        output,
+                        (commitment_base, commitment_hash, s),
+                    ));
+                    let mut ix = provide_randomness(
+                        oracle_client.keypair.pubkey(),
+                        *queue_pubkey,
+                        Pubkey::new_from_array(self.0.callback_program_id),
+                        *vrf_input,
+                        PodRistrettoPoint(output.to_bytes()),
+                        PodRistrettoPoint(commitment_base.to_bytes()),
+                        PodRistrettoPoint(commitment_hash.to_bytes()),
+                        PodScalar(s.to_bytes()),
+                    );
+                    let metas = self.0.account_metas(&account_bytes[8..]);
+                    ix.accounts.extend(metas.iter().map(|a| a.to_account_meta()));
+                    ix
+                }
+                _ => return Err(anyhow::anyhow!("Unknown request_type: {}", self.0.request_type)),
+            }
         };
 
         let budget = if is_purge {

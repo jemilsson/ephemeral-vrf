@@ -28,6 +28,8 @@ pub const RISTRETTO_BASEPOINT_POINT: PodRistrettoPoint = PodRistrettoPoint([
     130, 221, 141, 182, 166, 89, 69, 224, 141, 45, 118,
 ]);
 
+pub const OPRF_PREFIX_CHALLENGE: &[u8] = b"OPRF-Ephem-Challenge";
+
 pub const MAGIC_PROGRAM_ID: Pubkey = pubkey!("Magic11111111111111111111111111111111111111");
 pub const MAGIC_CONTEXT_ID: Pubkey = pubkey!("MagicContext1111111111111111111111111111111");
 pub const DEFAULT_EPHEMERAL_QUEUE: Pubkey = pubkey!("5hBR571xnXppuCPveTrctfTU7tJLSN94nq7kv7FRK5Tc");

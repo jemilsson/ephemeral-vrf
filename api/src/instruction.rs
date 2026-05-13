@@ -18,6 +18,8 @@ pub enum EphemeralVrfInstruction {
     CloseOracleQueue = 7,
     RequestRandomness = 8,
     PurgeExpiredRequests = 9,
+    RequestObliviousRandomness = 10,
+    ProvideObliviousRandomness = 11,
 }
 
 #[repr(C)]
@@ -108,6 +110,7 @@ instruction8!(EphemeralVrfInstruction, DelegateOracleQueue);
 instruction8!(EphemeralVrfInstruction, UndelegateOracleQueue);
 instruction8!(EphemeralVrfInstruction, CloseOracleQueue);
 instruction8!(EphemeralVrfInstruction, PurgeExpiredRequests);
+instruction8!(EphemeralVrfInstruction, ProvideObliviousRandomness);
 
 impl RequestRandomness {
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -128,4 +131,46 @@ impl RequestRandomness {
     pub fn try_from_bytes(mut bytes: &[u8]) -> Result<Self, std::io::Error> {
         Self::deserialize(&mut bytes)
     }
+}
+
+/// Request OPRF randomness. The `blinded_point` is a compressed Ristretto point
+/// T = r·H(seed) where r is the client's secret blinding scalar and seed is the
+/// client's private seed. The oracle evaluates Z = sk·T without learning seed.
+#[derive(BorshSerialize, BorshDeserialize, Debug, PartialEq, Default)]
+pub struct RequestObliviousRandomness {
+    /// Compressed Ristretto point: r·H(seed). Must not be the identity point.
+    pub blinded_point: [u8; 32],
+    pub callback_program_id: Pubkey,
+    pub callback_discriminator: Vec<u8>,
+    pub callback_accounts_metas: Vec<SerializableAccountMeta>,
+    pub callback_args: Vec<u8>,
+}
+
+impl RequestObliviousRandomness {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![
+            EphemeralVrfInstruction::RequestObliviousRandomness as u8,
+            0, 0, 0, 0, 0, 0, 0,
+        ];
+        self.serialize(&mut bytes).unwrap();
+        bytes
+    }
+
+    pub fn try_from_bytes(mut bytes: &[u8]) -> Result<Self, std::io::Error> {
+        Self::deserialize(&mut bytes)
+    }
+}
+
+/// Provide OPRF output and DLEQ proof.
+/// `input` is the request ID (as stored in the queue).
+/// `output` is Z = sk·T (the OPRF evaluation).
+/// `r1` is the commitment k·T, `r2` is k·G, `scalar` is s = k + c·sk.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct ProvideObliviousRandomness {
+    pub input: [u8; 32],
+    pub output: PodRistrettoPoint,
+    pub r1: PodRistrettoPoint,
+    pub r2: PodRistrettoPoint,
+    pub scalar: PodScalar,
 }
