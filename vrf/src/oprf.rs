@@ -1,9 +1,10 @@
-use crate::consts::OPRF_PREFIX_CHALLENGE;
+use crate::consts::{OPRF_PREFIX_CHALLENGE, VRF_PREFIX_NONCE};
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::Identity;
-use rand::rngs::OsRng;
+use hkdf::Hkdf;
+use sha2::Sha512;
 use solana_sdk::hash::hash;
 
 #[derive(Clone, Copy, Debug)]
@@ -37,8 +38,12 @@ pub fn compute_oprf(
 
     let Z = sk * T; // OPRF output: sk*T
 
-    // Random nonce from OS CSPRNG (unique per signing, prevents key leakage).
-    let k = Scalar::random(&mut OsRng);
+    // Deterministic nonce via HKDF (same pattern as vrf.rs; prevents key leakage without OS randomness).
+    let ikm = [&sk.to_bytes()[..], blinded_point_bytes].concat();
+    let hkdf = Hkdf::<Sha512>::new(Some(VRF_PREFIX_NONCE), &ikm);
+    let mut okm = [0u8; 64];
+    hkdf.expand(b"VRF-Nonce", &mut okm).expect("HKDF expansion failed");
+    let k = Scalar::from_bytes_mod_order(okm[..32].try_into().expect("slice error"));
 
     let R1 = k * T;
     let R2 = &k * RISTRETTO_BASEPOINT_TABLE;
