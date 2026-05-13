@@ -1,11 +1,9 @@
-use crate::consts::{OPRF_PREFIX_CHALLENGE, VRF_PREFIX_NONCE};
+use crate::consts::OPRF_PREFIX_CHALLENGE;
+use crate::primitives::{hkdf_nonce, hash_to_scalar};
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::Identity;
-use hkdf::Hkdf;
-use sha2::Sha512;
-use solana_sdk::hash::hash;
 
 #[derive(Clone, Copy, Debug)]
 pub struct DleqProof {
@@ -39,11 +37,7 @@ pub fn compute_oprf(
     let Z = sk * T; // OPRF output: sk*T
 
     // Deterministic nonce via HKDF (same pattern as vrf.rs; prevents key leakage without OS randomness).
-    let ikm = [&sk.to_bytes()[..], blinded_point_bytes].concat();
-    let hkdf = Hkdf::<Sha512>::new(Some(VRF_PREFIX_NONCE), &ikm);
-    let mut okm = [0u8; 64];
-    hkdf.expand(b"VRF-Nonce", &mut okm).expect("HKDF expansion failed");
-    let k = Scalar::from_bytes_mod_order(okm[..32].try_into().expect("slice error"));
+    let k = hkdf_nonce(&sk, blinded_point_bytes);
 
     let R1 = k * T;
     let R2 = &k * RISTRETTO_BASEPOINT_TABLE;
@@ -58,8 +52,7 @@ pub fn compute_oprf(
         R2.compress().to_bytes().to_vec(),
     ]
     .concat();
-    let c_hash = hash(&challenge_input);
-    let c = Scalar::from_bytes_mod_order(c_hash.to_bytes());
+    let c = hash_to_scalar(&challenge_input, None);
 
     let s = k + c * sk; // s = k + c*sk
 
@@ -109,8 +102,7 @@ pub fn verify_dleq(
         proof.r2.to_bytes().to_vec(),
     ]
     .concat();
-    let c_hash = hash(&challenge_input);
-    let c = Scalar::from_bytes_mod_order(c_hash.to_bytes());
+    let c = hash_to_scalar(&challenge_input, None);
 
     // Verify: s*T == R1 + c*Z  and  s*G == R2 + c*K
     let lhs_t = proof.s * T;
