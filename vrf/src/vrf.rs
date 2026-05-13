@@ -1,6 +1,5 @@
-use crate::consts::{
-    VRF_PREFIX_CHALLENGE, VRF_PREFIX_HASH_TO_POINT, VRF_PREFIX_HASH_TO_SCALAR, VRF_PREFIX_NONCE,
-};
+use crate::consts::{VRF_PREFIX_CHALLENGE, VRF_PREFIX_HASH_TO_POINT, VRF_PREFIX_HASH_TO_SCALAR};
+use crate::primitives::hkdf_nonce;
 use curve25519_dalek::constants::{RISTRETTO_BASEPOINT_POINT, RISTRETTO_BASEPOINT_TABLE};
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
@@ -30,16 +29,6 @@ fn hash_to_point(input: &[u8]) -> RistrettoPoint {
     Scalar::from_bytes_mod_order(hashed_input.to_bytes()) * RISTRETTO_BASEPOINT_POINT
 }
 
-// Hash-to-Scalar using built-in hash_to_scalar function, plus domain separation
-fn hash_to_scalar(input: &[u8; 32]) -> Scalar {
-    let hashed_input = hash(
-        [VRF_PREFIX_HASH_TO_SCALAR.to_vec(), input.to_vec()]
-            .concat()
-            .as_slice(),
-    );
-    Scalar::from_bytes_mod_order(hashed_input.to_bytes())
-}
-
 // VRF computation
 pub fn compute_vrf(
     sk: Scalar,
@@ -56,18 +45,7 @@ pub fn compute_vrf(
     let pk = &sk * RISTRETTO_BASEPOINT_TABLE;
 
     // RFC 9381 Nonce generation with domain separation and secure key derivation
-    // Use HKDF to derive the nonce from the secret key and input
-    let salt = VRF_PREFIX_NONCE;
-    let ikm = [&sk.to_bytes()[..], input].concat();
-    let hkdf = Hkdf::<Sha512>::new(Some(salt), &ikm);
-    let mut okm = [0u8; 64];
-    hkdf.expand(b"VRF-Nonce", &mut okm)
-        .expect("HKDF expansion failed");
-    let k = Scalar::from_bytes_mod_order(
-        okm[..32]
-            .try_into()
-            .expect("Failed to convert HKDF output to scalar - invalid 32-byte slice"),
-    );
+    let k = hkdf_nonce(&sk, input);
 
     // Commitments: one for basepoint G, one for hashed point h
     let commitment_base = k * RISTRETTO_BASEPOINT_POINT;
@@ -84,8 +62,9 @@ pub fn compute_vrf(
     ]
     .concat();
 
-    let challenge_hash = hash(challenge_input.as_slice());
-    let c = hash_to_scalar(&challenge_hash.to_bytes());
+    let inner = hash(&challenge_input);
+    let outer_input = [VRF_PREFIX_HASH_TO_SCALAR, &inner.to_bytes()[..]].concat();
+    let c = Scalar::from_bytes_mod_order(hash(&outer_input).to_bytes());
 
     // Response
     let s = k + c * sk;
@@ -131,8 +110,9 @@ pub fn verify_vrf(
         input.to_vec(),
     ]
     .concat();
-    let challenge_hash = hash(challenge_input.as_slice());
-    let c = hash_to_scalar(&challenge_hash.to_bytes());
+    let inner = hash(&challenge_input);
+    let outer_input = [VRF_PREFIX_HASH_TO_SCALAR, &inner.to_bytes()[..]].concat();
+    let c = Scalar::from_bytes_mod_order(hash(&outer_input).to_bytes());
 
     // ---------------------------
     // 1) Schnorr check for G:

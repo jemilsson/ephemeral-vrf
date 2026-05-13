@@ -6,6 +6,8 @@ mod initialize;
 mod initialize_oracle_queue;
 mod modify_oracles;
 mod process_undelegation;
+mod provide_oblivious_randomness;
+mod request_oblivious_randomness;
 mod provide_randomness;
 mod purge_expired_requests;
 mod request_randomness;
@@ -17,6 +19,8 @@ use initialize::*;
 use initialize_oracle_queue::*;
 use modify_oracles::*;
 use process_undelegation::*;
+use provide_oblivious_randomness::*;
+use request_oblivious_randomness::*;
 use provide_randomness::*;
 use purge_expired_requests::*;
 use request_randomness::*;
@@ -68,6 +72,12 @@ pub fn process_instruction(
         }
         EphemeralVrfInstruction::ProcessUndelegation => process_undelegation(accounts, data)?,
         EphemeralVrfInstruction::CloseOracleQueue => process_close_oracle_queue(accounts, data)?,
+        EphemeralVrfInstruction::RequestObliviousRandomness => {
+            process_request_oblivious_randomness(accounts, data)?
+        }
+        EphemeralVrfInstruction::ProvideObliviousRandomness => {
+            process_provide_oblivious_randomness(accounts, data)?
+        }
         EphemeralVrfInstruction::PurgeExpiredRequests => {
             process_purge_expired_requests(accounts, data)?
         }

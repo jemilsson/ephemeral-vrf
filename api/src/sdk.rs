@@ -183,3 +183,35 @@ pub fn close_oracle_queue(identity: Pubkey, index: u8) -> Instruction {
         data: CloseOracleQueue { index }.to_bytes(),
     }
 }
+
+/// Build a ProvideObliviousRandomness instruction.
+#[allow(clippy::too_many_arguments)]
+pub fn provide_oblivious_randomness(
+    oracle_identity: Pubkey,
+    oracle_queue: Pubkey,
+    callback_program_id: Pubkey,
+    request_id: [u8; 32],
+    output: PodRistrettoPoint,
+    r1: PodRistrettoPoint,
+    r2: PodRistrettoPoint,
+    s: PodScalar,
+) -> Instruction {
+    Instruction {
+        program_id: crate::ID,
+        accounts: vec![
+            AccountMeta::new(oracle_identity, true),
+            AccountMeta::new_readonly(program_identity_pda().0, false),
+            AccountMeta::new_readonly(oracle_data_pda(&oracle_identity).0, false),
+            AccountMeta::new(oracle_queue, false),
+            AccountMeta::new_readonly(callback_program_id, false),
+        ],
+        data: ProvideObliviousRandomness {
+            input: request_id,
+            output,
+            r1,
+            r2,
+            scalar: s,
+        }
+        .to_bytes(),
+    }
+}
