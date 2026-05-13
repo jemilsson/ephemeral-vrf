@@ -1,10 +1,9 @@
-use crate::consts::{VRF_PREFIX_NONCE, OPRF_PREFIX_CHALLENGE};
+use crate::consts::OPRF_PREFIX_CHALLENGE;
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::Identity;
-use hkdf::Hkdf;
-use sha2::Sha512;
+use rand::rngs::OsRng;
 use solana_sdk::hash::hash;
 
 #[derive(Clone, Copy, Debug)]
@@ -38,13 +37,8 @@ pub fn compute_oprf(
 
     let Z = sk * T; // OPRF output: sk*T
 
-    // Deterministic nonce via HKDF (safe: oracle controls sk, client controls T).
-    let ikm = [&sk.to_bytes()[..], blinded_point_bytes.as_ref()].concat();
-    let hkdf = Hkdf::<Sha512>::new(Some(VRF_PREFIX_NONCE), &ikm);
-    let mut okm = [0u8; 64];
-    hkdf.expand(b"OPRF-DLEQ-Nonce", &mut okm)
-        .expect("HKDF expansion failed");
-    let k = Scalar::from_bytes_mod_order(okm[..32].try_into().unwrap());
+    // Random nonce from OS CSPRNG (unique per signing, prevents key leakage).
+    let k = Scalar::random(&mut OsRng);
 
     let R1 = k * T;
     let R2 = &k * RISTRETTO_BASEPOINT_TABLE;
@@ -59,15 +53,8 @@ pub fn compute_oprf(
         R2.compress().to_bytes().to_vec(),
     ]
     .concat();
-    let c_hash = hash(challenge_input.as_slice());
-    let c = Scalar::from_bytes_mod_order(
-        hash(
-            [b"VRF-Ephem-HashToScalar".to_vec(), c_hash.to_bytes().to_vec()]
-                .concat()
-                .as_slice(),
-        )
-        .to_bytes(),
-    );
+    let c_hash = hash(&challenge_input);
+    let c = Scalar::from_bytes_mod_order(c_hash.to_bytes());
 
     let s = k + c * sk; // s = k + c*sk
 
@@ -117,15 +104,8 @@ pub fn verify_dleq(
         proof.r2.to_bytes().to_vec(),
     ]
     .concat();
-    let c_hash = hash(challenge_input.as_slice());
-    let c = Scalar::from_bytes_mod_order(
-        hash(
-            [b"VRF-Ephem-HashToScalar".to_vec(), c_hash.to_bytes().to_vec()]
-                .concat()
-                .as_slice(),
-        )
-        .to_bytes(),
-    );
+    let c_hash = hash(&challenge_input);
+    let c = Scalar::from_bytes_mod_order(c_hash.to_bytes());
 
     // Verify: s*T == R1 + c*Z  and  s*G == R2 + c*K
     let lhs_t = proof.s * T;
